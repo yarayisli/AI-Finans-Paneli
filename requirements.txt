@@ -5,3 +5,4 @@ streamlit
 scikit-learn
 numpy
 plotly
+google-generativeai
