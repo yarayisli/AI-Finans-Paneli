@@ -8,8 +8,8 @@ import requests
 import google.generativeai as genai
 
 # --- Firebase Bağlantısı (Sadece bir kere yapılır) ---
-# Bu bölüm, anahtarınızı Streamlit'in gizli kasasından okur.
 try:
+    # Bu bölüm, anahtarınızı Streamlit'in gizli kasasından okur.
     firebase_creds_dict = {
       "type": st.secrets["firebase"]["type"],
       "project_id": st.secrets["firebase"]["project_id"],
@@ -26,14 +26,19 @@ try:
     if not firebase_admin._apps:
         firebase_admin.initialize_app(cred)
 except (KeyError, ValueError):
-    st.error("Firebase yapılandırması eksik veya hatalı. Lütfen Streamlit Cloud Secrets'ı kontrol edin.")
-    st.stop()
+    # Yerelde çalışırken bu hatayı görmezden gel, anahtar dosyasını kullan
+    try:
+        if not firebase_admin._apps:
+            cred = credentials.Certificate("firebase-key.json")
+            firebase_admin.initialize_app(cred)
+    except FileNotFoundError:
+        st.error("Firebase anahtar dosyası bulunamadı ve Streamlit Secrets ayarlanmamış.")
+        st.stop()
 
 
 db = firestore.client()
 
 # --- Tüm Analiz Fonksiyonları (Değişiklik yok) ---
-# calistir_analiz, doviz_kuru_getir, prophet_tahmini_yap, yorum_uret...
 def calistir_analiz(veri_df):
     if veri_df.empty: return {"hata": "Filtrelenen veri bulunamadı."}
     try:
@@ -63,14 +68,16 @@ def yorum_uret(api_key, analiz_sonuclari, tahmin_ozeti):
         """
         response = model.generate_content(prompt)
         return response.text
-    except Exception as e: return f"Yorum üretilirken bir hata oluştu: {e}"
+    except Exception as e:
+        # Gerçek hatayı loglamak daha iyi olur, ama kullanıcıya genel bir mesaj gösterelim.
+        st.error(f"AI Yorumu üretilemedi. API anahtarınızın geçerli olduğundan ve limitleri aşmadığınızdan emin olun.")
+        return ""
 
 # --- ANA UYGULAMA MANTIĞI ---
 
 def main():
     st.set_page_config(page_title="AI Finans Danışmanı", layout="wide")
 
-    # Kullanıcı giriş yapmış mı kontrol et
     if 'user_info' not in st.session_state:
         st.session_state['user_info'] = None
 
@@ -84,7 +91,6 @@ def main():
             st.session_state['user_info'] = None
             st.rerun()
 
-        # Abonelik durumunu veritabanından kontrol et
         user_doc_ref = db.collection('users').document(user_uid)
         user_doc = user_doc_ref.get()
         subscription_plan = user_doc.to_dict().get('subscription_plan', 'None')
@@ -92,16 +98,19 @@ def main():
         if subscription_plan == 'None':
             # FİYATLANDIRMA EKRANI
             st.title("Size Özel Abonelik Paketleri")
-            st.write("Lütfen devam etmek için bir paket seçin.")
+            # ... (Fiyatlandırma kodları aynı)
             col1, col2, col3 = st.columns(3)
-            if col1.button("Basic Paket Seç (₺350/ay)"):
-                user_doc_ref.set({'subscription_plan': 'Basic'}, merge=True); st.rerun()
-            if col2.button("Pro Paket Seç (₺750/ay)"):
-                user_doc_ref.set({'subscription_plan': 'Pro'}, merge=True); st.rerun()
-            if col3.button("Enterprise Paket Seç (₺2000/ay)"):
-                user_doc_ref.set({'subscription_plan': 'Enterprise'}, merge=True); st.rerun()
+            with col1:
+                st.subheader("Basic"); st.write("Raporlama + özet"); st.write("₺350/ay")
+                if st.button("Basic Paket Seç"): user_doc_ref.set({'subscription_plan': 'Basic'}, merge=True); st.rerun()
+            with col2:
+                st.subheader("Pro"); st.write("AI öneri + rapor"); st.write("₺750/ay")
+                if st.button("Pro Paket Seç"): user_doc_ref.set({'subscription_plan': 'Pro'}, merge=True); st.rerun()
+            with col3:
+                st.subheader("Enterprise"); st.write("Çoklu kullanıcı + destek"); st.write("₺2000/ay")
+                if st.button("Enterprise Paket Seç"): user_doc_ref.set({'subscription_plan': 'Enterprise'}, merge=True); st.rerun()
         else:
-            # ABONELİK VARSA, ANALİZ PANELİNİ GÖSTER
+            # ABONELİK VARSA, ANALİZ PANELİNİ GÖSTER (DOLDURULMUŞ HALİ)
             st.title(f"🚀 Finansal Analiz Paneli ({subscription_plan} Paket)")
             
             uploaded_file = st.file_uploader("Analiz için CSV dosyanızı buraya yükleyin", type="csv")
@@ -112,16 +121,15 @@ def main():
                 if "hata" not in analiz_sonuclari:
                     st.header("Genel Finansal Durum")
                     col1, col2, col3 = st.columns(3)
-                    col1.metric("Toplam Gelir", f"{analiz_sonuclari['toplam_gelir']} TL")
-                    col2.metric("Toplam Gider", f"{analiz_sonuclari['toplam_gider']} TL")
-                    col3.metric("Net Kar", f"{analiz_sonuclari['net_kar']} TL")
+                    col1.metric("Toplam Gelir", f"{analiz_sonuclari['toplam_gelir']:,} TL")
+                    col2.metric("Toplam Gider", f"{analiz_sonuclari['toplam_gider']:,} TL")
+                    col3.metric("Net Kar", f"{analiz_sonuclari['net_kar']:,} TL")
                     
                     st.divider()
                     st.header("Gelir Tahmini")
                     aylik_veri = ana_veri.set_index('Tarih')[['Gelir']].resample('ME').sum()
                     model, tahmin = prophet_tahmini_yap(aylik_veri)
 
-                    # ABONELİK PAKETİNE GÖRE ÖZELLİK KONTROLÜ
                     if subscription_plan in ['Pro', 'Enterprise']:
                         if model and tahmin is not None:
                             fig = plot_plotly(model, tahmin, xlabel="Tarih", ylabel="Gelir")
@@ -130,28 +138,28 @@ def main():
                             st.divider()
                             st.header("🤖 AI Danışman Yorumu")
                             with st.spinner("Yapay zeka danışmanınız verileri analiz ediyor..."):
-                                son_gercek_gelir = tahmin['yhat'].iloc[-4]
-                                son_tahmin_gelir = tahmin['yhat'].iloc[-1]
+                                son_gercek_gelir = tahmin['yhat'].iloc[-4]; son_tahmin_gelir = tahmin['yhat'].iloc[-1]
                                 tahmin_trendi = "Yükselişte" if son_tahmin_gelir > son_gercek_gelir else "Düşüşte veya Durgun"
                                 yorum = yorum_uret(st.secrets["GEMINI_API_KEY"], analiz_sonuclari, tahmin_trendi)
                                 st.markdown(yorum)
-                        else:
-                            st.warning("Tahmin ve yorum oluşturmak için yeterli veri bulunmuyor.")
+                        else: st.warning("Tahmin ve yorum oluşturmak için yeterli veri bulunmuyor.")
                     else: # Basic paket ise
+                        st.line_chart(aylik_veri) # Sadece temel grafiği göster
                         st.info("AI Danışman Yorumu ve detaylı tahmin grafiği 'Pro' ve 'Enterprise' paketlerinde mevcuttur.")
+            else:
+                 st.info("Lütfen bir CSV dosyası yükleyerek analize başlayın.")
 
     else:
         # KULLANICI GİRİŞ YAPMAMIŞSA
+        # ... (Giriş/Kayıt kodları aynı)
         choice = st.selectbox("Giriş Yap / Kayıt Ol", ["Giriş Yap", "Kayıt Ol"])
         email = st.text_input("E-posta Adresi")
         password = st.text_input("Şifre", type="password")
-
         if choice == "Giriş Yap":
             if st.button("Giriş Yap", type="primary"):
                 try:
+                    # Bu prototipte, Firebase'in şifreyi doğrulamadığını unutmayın.
                     user = auth.get_user_by_email(email)
-                    # Gerçekte şifre doğrulaması için Firebase'in client-side SDK'ları kullanılır.
-                    # Bu prototipte girişin başarılı olduğunu varsayıyoruz.
                     st.session_state['user_info'] = {'uid': user.uid, 'email': user.email}
                     st.rerun()
                 except Exception as e:
