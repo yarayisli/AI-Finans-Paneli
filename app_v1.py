@@ -39,20 +39,29 @@ st.markdown("""
 """, unsafe_allow_html=True)
 
 
-# --- Firebase Bağlantısı (Hibrit: Yerel + Bulut) ---
-try:
-    # Önce Streamlit Cloud Secrets'ı dene
-    firebase_creds_dict = st.secrets["firebase"]
-    cred = credentials.Certificate(firebase_creds_dict)
-except (KeyError, FileNotFoundError):
-    # Eğer bulamazsa, yereldeki anahtar dosyasını dene
+# --- DÜZELTİLMİŞ: Firebase Bağlantı Fonksiyonu ---
+@st.cache_resource
+def init_firebase():
+    """
+    Firebase bağlantısını güvenli bir şekilde başlatır.
+    Bu fonksiyonun @st.cache_resource ile işaretlenmesi, bağlantının sadece bir kere kurulmasını sağlar.
+    """
     try:
-        cred = credentials.Certificate("firebase-key.json")
-    except FileNotFoundError:
-        cred = None # Anahtar bulunamazsa devam et, hata verme
+        # Önce Streamlit Cloud Secrets'ı dene
+        firebase_creds_dict = st.secrets["firebase"]
+        cred = credentials.Certificate(firebase_creds_dict)
+    except (KeyError, FileNotFoundError):
+        # Eğer bulamazsa, yereldeki anahtar dosyasını dene
+        try:
+            cred = credentials.Certificate("firebase-key.json")
+        except FileNotFoundError:
+            # İki yöntem de başarısız olursa, bağlantı kurma
+            return None
+    
+    if not firebase_admin._apps:
+        firebase_admin.initialize_app(cred)
+    return True
 
-if cred and not firebase_admin._apps:
-    firebase_admin.initialize_app(cred)
 
 # --- Tüm Analiz Fonksiyonları (Değişiklik yok) ---
 # calistir_analiz, prophet_tahmini_yap, yorum_uret fonksiyonları burada...
@@ -178,10 +187,15 @@ def main():
 
     firebase_ok = init_firebase()
 
+    if not firebase_ok:
+        st.warning("Firebase bağlantısı kurulamadı. Lütfen `firebase-key.json` dosyanızın veya Streamlit Secrets ayarlarınızın doğru olduğundan emin olun.")
+        st.stop()
+    
+    db = firestore.client()
+    
     # Giriş yapmış kullanıcı
     if st.session_state['user_info']:
         user_uid = st.session_state['user_info']['uid']
-        db = firestore.client()
         user_doc_ref = db.collection('users').document(user_uid)
         user_doc = user_doc_ref.get()
         subscription_plan = user_doc.to_dict().get('subscription_plan', 'None')
@@ -206,11 +220,11 @@ def main():
             show_landing_page()
         else: # Giriş/Kayıt ekranı
             st.subheader("Hesabınıza Giriş Yapın")
-            db = firestore.client()
             email = st.text_input("E-posta")
             password = st.text_input("Şifre", type="password")
             if st.button("Giriş Yap", type="primary"):
                 try:
+                    # NOT: Bu prototip şifre doğrulaması yapmaz.
                     user = auth.get_user_by_email(email)
                     st.session_state['user_info'] = {'uid': user.uid, 'email': user.email}; st.rerun()
                 except: st.error("E-posta veya şifre hatalı.")
