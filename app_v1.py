@@ -1,4 +1,5 @@
 # KazKaz AI Finansal Danisman (Yerel + Bulut Uyumlu Versiyon)
+import os
 import streamlit as st
 import pandas as pd
 from prophet import Prophet
