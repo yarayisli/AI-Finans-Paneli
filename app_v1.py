@@ -174,4 +174,92 @@ def main():
                     st.error(f"Kayıt sırasında bir hata oluştu: {e}")
 
 if __name__ == '__main__':
+def main():
+    st.set_page_config(page_title="AI Finans Danışmanı", layout="wide")
+
+    # Kullanıcı giriş yapmış mı kontrol et
+    if 'user_info' not in st.session_state:
+        st.session_state['user_info'] = None
+
+    if st.session_state['user_info']:
+        # KULLANICI GİRİŞ YAPMIŞSA
+        user_uid = st.session_state['user_info']['uid']
+        user_email = st.session_state['user_info']['email']
+
+        st.sidebar.subheader(f"Hoş Geldin, {user_email}")
+        if st.sidebar.button("Çıkış Yap"):
+            st.session_state['user_info'] = None
+            st.rerun()
+
+        user_doc_ref = db.collection('users').document(user_uid)
+        user_doc = user_doc_ref.get()
+        subscription_plan = user_doc.to_dict().get('subscription_plan', 'None')
+
+        if subscription_plan == 'None':
+            # FİYATLANDIRMA EKRANI
+            st.title("Size Özel Abonelik Paketleri")
+            col1, col2, col3 = st.columns(3)
+            with col1:
+                st.subheader("Basic"); st.write("Raporlama + özet"); st.write("₺350/ay")
+                if st.button("Basic Paket Seç"): user_doc_ref.set({'subscription_plan': 'Basic'}, merge=True); st.rerun()
+            with col2:
+                st.subheader("Pro"); st.write("AI öneri + rapor"); st.write("₺750/ay")
+                if st.button("Pro Paket Seç"): user_doc_ref.set({'subscription_plan': 'Pro'}, merge=True); st.rerun()
+            with col3:
+                st.subheader("Enterprise"); st.write("Çoklu kullanıcı + destek"); st.write("₺2000/ay")
+                if st.button("Enterprise Paket Seç"): user_doc_ref.set({'subscription_plan': 'Enterprise'}, merge=True); st.rerun()
+        else:
+            # ABONELİK VARSA, ANALİZ PANELİNİ GÖSTER
+            st.title(f"🚀 Finansal Analiz Paneli ({subscription_plan} Paket)")
+            
+            # DEĞİŞİKLİK: Filtreleme başlığını dosya yükleme mantığının dışına taşıdık
+            st.sidebar.divider()
+            st.sidebar.header("Filtreleme Seçenekleri")
+            
+            uploaded_file = st.file_uploader("Analiz için CSV dosyanızı buraya yükleyin", type="csv")
+            
+            if uploaded_file:
+                ana_veri = pd.read_csv(uploaded_file, parse_dates=['Tarih'])
+                
+                # DEĞİŞİKLİK: Filtreleme seçenekleri artık dosya yüklendikten sonra başlığın altında beliriyor
+                urun_listesi = ["Tümü"] + sorted(ana_veri['Satilan_Urun_Adi'].unique().tolist())
+                secilen_urun = st.selectbox("Ürüne Göre Filtrele:", urun_listesi)
+
+                if secilen_urun == "Tümü":
+                    filtrelenmis_veri = ana_veri
+                else:
+                    filtrelenmis_veri = ana_veri[ana_veri['Satilan_Urun_Adi'] == secilen_urun]
+                
+                # --- Analiz ve Gösterge Paneli ---
+                # ... (Geri kalan tüm analiz, metrik ve grafik kodları aynı kalacak)
+                analiz_sonuclari = calistir_analiz(filtrelenmis_veri)
+                if "hata" not in analiz_sonuclari:
+                    st.header(f"'{secilen_urun}' için Finansal Durum")
+                    # ... metrikler ...
+                    st.divider()
+                    st.header(f"'{secilen_urun}' için Profesyonel Gelir Tahmini")
+                    aylik_veri = filtrelenmis_veri.set_index('Tarih')[['Gelir']].resample('ME').sum()
+                    model, tahmin = prophet_tahmini_yap(aylik_veri)
+                    if subscription_plan in ['Pro', 'Enterprise']:
+                        if model and tahmin is not None:
+                            # ... AI yorumu ve grafiği ...
+                            fig = plot_plotly(model, tahmin, xlabel="Tarih", ylabel="Gelir")
+                            st.plotly_chart(fig, use_container_width=True)
+                            st.divider()
+                            st.header("🤖 AI Danışman Yorumu")
+                            # ... yorum üretme kodu ...
+                        else: st.warning("Tahmin için yeterli veri yok.")
+                    else:
+                        st.line_chart(aylik_veri)
+                        st.info("AI Danışman Yorumu 'Pro' paketinde mevcuttur.")
+            else:
+                 st.info("Lütfen bir CSV dosyası yükleyerek analize başlayın.")
+    else:
+        # KULLANICI GİRİŞ YAPMAMIŞSA
+        # ... (Giriş/Kayıt kodları aynı)
+        choice = st.selectbox("Giriş Yap / Kayıt Ol", ["Giriş Yap", "Kayıt Ol"])
+        # ...
+        
+# Bu satır en altta kalacak
+if __name__ == '__main__':
     main()
