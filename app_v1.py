@@ -92,7 +92,7 @@ def prophet_tahmini_yap(aylik_gelir):
     return model, forecast
 
 def yorum_uret(api_key, prompt_data):
-    """AI Danışman yorumu üretir."""
+    """AI Danışman için kısa yorumlar üretir."""
     try:
         genai.configure(api_key=api_key)
         model = genai.GenerativeModel('gemini-1.5-flash')
@@ -100,6 +100,41 @@ def yorum_uret(api_key, prompt_data):
         response = model.generate_content(prompt)
         return response.text
     except Exception: return "AI yorumu şu anda kullanılamıyor."
+
+# YENİ: Profesyonel Tahmin Yorumu Üreten Fonksiyon
+def tahmin_yorumu_uret(api_key, forecast_df):
+    """
+    Prophet tahmin sonuçlarını alıp, aktüeryal bir bakış açısıyla profesyonel bir stratejik yorum üretir.
+    """
+    try:
+        genai.configure(api_key=api_key)
+        model = genai.GenerativeModel('gemini-1.5-flash')
+
+        # Yorum için gerekli verileri tahminden çıkar
+        son_tahmin = forecast_df.iloc[-1]
+        onceki_tahmin = forecast_df.iloc[-4]
+        trend = "Yükselişte" if son_tahmin['yhat'] > onceki_tahmin['yhat'] else "Düşüşte veya Durgun"
+        belirsizlik_araligi = son_tahmin['yhat_upper'] - son_tahmin['yhat_lower']
+        
+        prompt = f"""
+        Sen, aktüerya ve risk yönetimi konusunda uzman, profesyonel bir finansal stratejistsin.
+        Aşağıdaki gelecek tahmini verilerini analiz et ve stratejik bir yorum yaz. Yorumun şunları içermeli:
+        1. Tahminin ana yönü (trend) hakkında bir değerlendirme.
+        2. Tahmindeki belirsizlik aralığına (volatilite) dayalı bir risk analizi.
+        3. Bu öngörülere dayanarak şirketin atması gereken 1-2 adet stratejik adım.
+        Tonun profesyonel, analitik ve yol gösterici olmalı.
+
+        Veriler:
+        - Gelecek 3 Aylık Gelir Tahmini Trendi: {trend}
+        - Son Tahmin Edilen Gelir (yhat): {son_tahmin['yhat']:.2f} TL
+        - Tahmin Güven Aralığı (En Kötü Senaryo - yhat_lower): {son_tahmin['yhat_lower']:.2f} TL
+        - Tahmin Güven Aralığı (En İyi Senaryo - yhat_upper): {son_tahmin['yhat_upper']:.2f} TL
+        - Belirsizlik Aralığı Genişliği: {belirsizlik_araligi:.2f} TL (Bu değerin yüksekliği, tahminin daha az kesin olduğunu ve riskin arttığını gösterir.)
+        """
+        response = model.generate_content(prompt)
+        return response.text
+    except Exception: 
+        return "Stratejik tahmin yorumu şu anda üretilemiyor. Lütfen API anahtarınızı kontrol edin."
 
 
 # --- ARAYÜZ GÖSTERİM FONKSİYONLARI ---
@@ -128,17 +163,13 @@ def show_dashboard(user_info, api_key):
 
     with tab1:
         st.header("Genel Finansal Durum")
-        # Finansal Sağlık Skoru
         skor = max(0, min(100, analiz['kar_marji'] * 2.5))
         st.plotly_chart(create_gauge_chart(skor, "Finansal Sağlık Skoru"), use_container_width=True)
-        
         col1, col2 = st.columns(2)
         with col1:
-            # Gelir & Gider Karşılaştırma
             fig_bar = px.bar(analiz['aylik_veri'], x=analiz['aylik_veri'].index, y=['Gelir', 'Gider'], title="Aylık Gelir & Gider Karşılaştırması", barmode='group')
             st.plotly_chart(fig_bar, use_container_width=True)
         with col2:
-            # Net Kar Trendi
             fig_line = px.line(analiz['aylik_veri'], x=analiz['aylik_veri'].index, y='Net Kar', title="Aylık Net Kâr Trendi", markers=True)
             st.plotly_chart(fig_line, use_container_width=True)
 
@@ -146,21 +177,17 @@ def show_dashboard(user_info, api_key):
         st.header("Detaylı Gelir Analizi")
         col1, col2 = st.columns(2)
         with col1:
-            # Ürün Bazlı Gelir Grafiği
             fig_urun = px.bar(analiz['top_urunler'], x='Gelir', y=analiz['top_urunler'].index, orientation='h', title="En Çok Gelir Getiren 5 Ürün/Hizmet")
             st.plotly_chart(fig_urun, use_container_width=True)
         with col2:
-            # Kar Marjı Zaman Serisi
             fig_marj = px.area(analiz['aylik_veri'], x=analiz['aylik_veri'].index, y='Kar Marjı', title="Aylık Kar Marjı (%) Trendi", markers=True)
             st.plotly_chart(fig_marj, use_container_width=True)
-        # Bonus: AI Yorumu
         if api_key and not analiz['top_urunler'].empty:
             prompt_data = f"En karlı ürün '{analiz['top_urunler'].index[0]}' ve kar marjı trendi."
             st.info(f"**AI Yorumu:** {yorum_uret(api_key, prompt_data)}")
 
     with tab3:
         st.header("Detaylı Gider Analizi")
-        # Gider Dağılımı Pastası
         fig_pie = px.pie(analiz['gider_dagilimi'], names=analiz['gider_dagilimi'].index, values=analiz['gider_dagilimi'].values, title="Kategoriye Göre Gider Dağılımı", hole=.4)
         st.plotly_chart(fig_pie, use_container_width=True)
         if api_key and not analiz['gider_dagilimi'].empty:
@@ -169,12 +196,21 @@ def show_dashboard(user_info, api_key):
 
     with tab4:
         st.header("AI Destekli Gelecek Tahmini")
-        # Prophet Tahmini
         aylik_gelir = df.set_index('Tarih')[['Gelir']].resample('M').sum()
         model, tahmin = prophet_tahmini_yap(aylik_gelir)
         if model and tahmin is not None:
             fig_prophet = plot_plotly(model, tahmin, xlabel="Tarih", ylabel="Gelir")
             st.plotly_chart(fig_prophet, use_container_width=True)
+            
+            # YENİ: Profesyonel AI Yorumu Bölümü
+            st.divider()
+            st.subheader("🤖 Stratejik Tahmin Analizi")
+            if api_key:
+                with st.spinner("AI stratejistiniz geleceği yorumluyor..."):
+                    stratejik_yorum = tahmin_yorumu_uret(api_key, tahmin)
+                    st.markdown(stratejik_yorum)
+            else:
+                st.warning("Stratejik yorumu görmek için lütfen API anahtarınızı girin.")
         else:
             st.warning("Tahmin oluşturmak için yeterli veri yok.")
 
@@ -211,6 +247,7 @@ def main():
             api_key = get_gemini_api_key()
             show_dashboard(user_info, api_key)
     else:
+        # Basitleştirilmiş giriş/kayıt
         st.title("Finansal Analiz Paneline Hoş Geldiniz")
         email = st.text_input("E-posta")
         password = st.text_input("Şifre", type="password")
@@ -222,4 +259,3 @@ def main():
 
 if __name__ == '__main__':
     main()
-
