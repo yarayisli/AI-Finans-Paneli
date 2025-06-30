@@ -13,6 +13,7 @@ import io
 import time
 import gspread
 from oauth2client.service_account import ServiceAccountCredentials
+import os # YENİ: Font yolu için os modülü eklendi
 
 # --- Sayfa Yapılandırması ve Stil ---
 st.set_page_config(page_title="KazKaz Finansal Danışman", layout="wide", initial_sidebar_state="auto")
@@ -31,6 +32,7 @@ st.markdown("""
 
 
 # --- GÜVENLİ BAĞLANTI VE ANAHTAR YÖNETİMİ ---
+# ... (Bu bölümde değişiklik yok) ...
 @st.cache_resource
 def init_firebase():
     """Firebase bağlantısını güvenli bir şekilde başlatır."""
@@ -53,7 +55,6 @@ def get_gemini_api_key():
     except KeyError:
         return st.sidebar.text_input("Gemini API Anahtarınızı Girin", type="password", help="Bu sadece yerel testler içindir.")
 
-# YENİ: Google Sheets Bağlantısı
 @st.cache_resource
 def init_gspread():
     """Google Sheets API bağlantısını başlatır."""
@@ -68,7 +69,7 @@ def init_gspread():
         return None
 
 # --- VERİ YÜKLEME VE DOĞRULAMA FONKSİYONLARI ---
-
+# ... (Bu bölümde değişiklik yok) ...
 def load_from_gsheets(client, url):
     """Google Sheets URL'sinden veri yükler ve DataFrame'e çevirir."""
     try:
@@ -80,7 +81,6 @@ def load_from_gsheets(client, url):
     except Exception as e:
         return f"Hata: Veri okunurken bir sorun oluştu: {str(e)}"
 
-# YENİ: Gelişmiş Hata Yönetimi ile Veri Yükleme
 def validate_and_load_data(source, input_data):
     """Veriyi yükler, doğrular ve hataları yönetir."""
     df = None
@@ -97,7 +97,6 @@ def validate_and_load_data(source, input_data):
                 st.error(input_data)
                 return None, input_data
 
-        # Sütun Kontrolü
         required_columns = ['Tarih', 'Gelir', 'Gider']
         missing_cols = [col for col in required_columns if col not in df.columns]
         if missing_cols:
@@ -105,7 +104,6 @@ def validate_and_load_data(source, input_data):
             st.error(error_msg)
             return None, error_msg
 
-        # Tarih Formatı Kontrolü
         df['Tarih'] = pd.to_datetime(df['Tarih'], errors='coerce')
         if df['Tarih'].isnull().any():
             error_msg = "Hata: 'Tarih' sütunundaki bazı değerler anlaşılamadı. Lütfen 'YYYY-MM-DD' formatını kullanın."
@@ -119,15 +117,13 @@ def validate_and_load_data(source, input_data):
         st.error(error_msg)
         return None, error_msg
 
-
 # --- TÜM ANALİZ VE GRAFİK FONKSİYONLARI ---
-# (calistir_analiz, create_gauge_chart, prophet_tahmini_yap, yorum_uret, tahmin_yorumu_uret fonksiyonları aynı kalıyor)
+# ... (calistir_analiz, create_gauge_chart, prophet_tahmini_yap, yorum_uret, tahmin_yorumu_uret fonksiyonlarında değişiklik yok) ...
 def calistir_analiz(df):
     """Tüm finansal metrikleri ve analiz verilerini tek seferde hesaplar."""
     if df.empty: return {"hata": "Veri bulunamadı."}
     try:
         analiz = {}
-        # Gerekli sütunları sayısal yap, hataları NaN ile değiştir ve 0 ile doldur.
         df['Gelir'] = pd.to_numeric(df['Gelir'], errors='coerce').fillna(0)
         df['Gider'] = pd.to_numeric(df['Gider'], errors='coerce').fillna(0)
         
@@ -139,7 +135,6 @@ def calistir_analiz(df):
         analiz['en_yuksek_gider_kategorisi'] = gider_kategorileri.idxmax() if not gider_kategorileri.empty else "N/A"
         analiz['kar_marji'] = (analiz['net_kar'] / analiz['toplam_gelir'] * 100) if analiz['toplam_gelir'] > 0 else 0
         
-        # Grafik verilerini önceden hesapla
         analiz['aylik_veri'] = df.set_index('Tarih').resample('M').agg({'Gelir': 'sum', 'Gider': 'sum'})
         analiz['aylik_veri']['Net Kar'] = analiz['aylik_veri']['Gelir'] - analiz['aylik_veri']['Gider']
         analiz['aylik_veri']['Kar Marjı'] = (analiz['aylik_veri']['Net Kar'] / analiz['aylik_veri']['Gelir'] * 100).fillna(0)
@@ -147,7 +142,6 @@ def calistir_analiz(df):
         analiz['top_urunler'] = df[df['Gelir'] > 0].groupby('Satilan_Urun_Adi')['Gelir'].sum().nlargest(5) if 'Satilan_Urun_Adi' in df.columns else pd.Series()
         analiz['gider_dagilimi'] = gider_kategorileri
         
-        # Grafik figürlerini önceden oluştur
         analiz['fig_bar'] = px.bar(analiz['aylik_veri'], x=analiz['aylik_veri'].index, y=['Gelir', 'Gider'], title="Aylık Gelir & Gider", barmode='group')
         analiz['fig_line'] = px.line(analiz['aylik_veri'], x=analiz['aylik_veri'].index, y='Net Kar', title="Aylık Net Kâr Trendi", markers=True)
         if not analiz['top_urunler'].empty:
@@ -222,31 +216,48 @@ def tahmin_yorumu_uret(api_key, forecast_df):
     except Exception: return "Stratejik tahmin yorumu şu anda üretilemiyor. Lütfen API anahtarınızı kontrol edin."
 
 
-# YENİ: PDF Raporlama Fonksiyonu
+# --- PDF BÖLÜMÜ GÜNCELLEMESİ ---
 class PDF(FPDF):
     def header(self):
-        self.set_font('Arial', 'B', 15)
+        # GÜNCELLENDİ: Unicode fontu kullan
+        self.set_font('DejaVu', 'B', 15)
         self.cell(0, 10, 'KazKaz AI Finansal Analiz Raporu', 0, 1, 'C')
         self.ln(10)
 
     def chapter_title(self, title):
-        self.set_font('Arial', 'B', 12)
+        # GÜNCELLENDİ: Unicode fontu kullan
+        self.set_font('DejaVu', 'B', 12)
         self.cell(0, 10, title, 0, 1, 'L')
         self.ln(4)
 
     def chapter_body(self, body):
-        self.set_font('Arial', '', 10)
+        # GÜNCELLENDİ: Unicode fontu kullan
+        self.set_font('DejaVu', '', 10)
         self.multi_cell(0, 5, body)
         self.ln()
         
     def add_metric(self, label, value):
-        self.set_font('Arial', 'B', 10)
+        # GÜNCELLENDİ: Unicode fontu kullan
+        self.set_font('DejaVu', 'B', 10)
         self.cell(95, 8, label, 1, 0, 'L')
-        self.set_font('Arial', '', 10)
-        self.cell(95, 8, value, 1, 1, 'R')
+        self.set_font('DejaVu', '', 10)
+        # GÜNCELLENDİ: Hataları önlemek için değeri string'e çevir
+        self.cell(95, 8, str(value), 1, 1, 'R')
 
 def generate_pdf_report(analiz, stratejik_yorum=None, forecast_fig=None):
     pdf = PDF()
+    
+    # YENİ: Unicode fontunu FPDF'e ekle
+    # Bu satırın çalışması için DejaVuSans.ttf dosyasının
+    # projenizin ana klasöründe olması gerekir.
+    try:
+        font_path = os.path.join(os.path.dirname(__file__), "DejaVuSans.ttf")
+        pdf.add_font("DejaVu", "", font_path, uni=True)
+        pdf.add_font("DejaVu", "B", font_path, uni=True) # Kalın (Bold) versiyonu için
+    except FileNotFoundError:
+        st.error("PDF Raporu için 'DejaVuSans.ttf' font dosyası bulunamadı. Lütfen fontu proje klasörüne ekleyin.")
+        return None # Font yoksa PDF oluşturmayı durdur
+        
     pdf.add_page()
 
     # Genel Bakış
@@ -254,8 +265,8 @@ def generate_pdf_report(analiz, stratejik_yorum=None, forecast_fig=None):
     pdf.add_metric('Toplam Gelir:', f"{analiz['toplam_gelir']:,.2f} TL")
     pdf.add_metric('Toplam Gider:', f"{analiz['toplam_gider']:,.2f} TL")
     pdf.add_metric('Net Kar:', f"{analiz['net_kar']:,.2f} TL")
-    pdf.add_metric('Kar Marji:', f"{analiz['kar_marji']:.2f}%")
-    pdf.add_metric('En Yuksek Gider Kategorisi:', analiz['en_yuksek_gider_kategorisi'])
+    pdf.add_metric('Kar Marjı:', f"{analiz['kar_marji']:.2f}%")
+    pdf.add_metric('En Yüksek Gider Kategorisi:', analiz['en_yuksek_gider_kategorisi'])
     pdf.ln(10)
 
     # Grafikleri resim olarak kaydet ve ekle
@@ -267,9 +278,9 @@ def generate_pdf_report(analiz, stratejik_yorum=None, forecast_fig=None):
                 fig.write_image(filename, scale=2)
                 image_files.append(filename)
                 
-                if name == "fig_bar": pdf.chapter_title('Aylik Gelir & Gider')
-                if name == "fig_line": pdf.chapter_title('Aylik Net Kar Trendi')
-                if name == "fig_pie": pdf.chapter_title('Gider Dagilimi')
+                if name == "fig_bar": pdf.chapter_title('Aylık Gelir & Gider')
+                if name == "fig_line": pdf.chapter_title('Aylık Net Kar Trendi')
+                if name == "fig_pie": pdf.chapter_title('Gider Dağılımı')
                 
                 pdf.image(filename, x=None, y=None, w=180)
                 pdf.ln(5)
@@ -290,13 +301,16 @@ def generate_pdf_report(analiz, stratejik_yorum=None, forecast_fig=None):
 
     finally:
         # Geçici resim dosyalarını sil
-        import os
         for f in image_files:
-            os.remove(f)
-
+            if os.path.exists(f):
+                os.remove(f)
+    
+    # GÜNCELLENDİ: PDF çıktısını hatasız almak için 'latin-1' yerine 'utf-8' denenebilir
+    # Ancak FPDF'in standart çıktısı genellikle 'latin-1' ile uyumludur.
     return pdf.output(dest='S').encode('latin-1')
 
 
+# --- Geri kalan kodda değişiklik yok ---
 # YENİ: Geri Bildirim Kaydetme Fonksiyonu
 def log_feedback(db, user_id, feedback_value, yorum):
     """Kullanıcı geri bildirimini Firestore'a kaydeder."""
@@ -312,10 +326,9 @@ def log_feedback(db, user_id, feedback_value, yorum):
 # --- ARAYÜZ GÖSTERİM FONKSİYONLARI ---
 
 def show_dashboard(user_info, api_key, db):
-    subscription_plan = user_info.get('subscription_plan', 'Temel') # Varsayılan Temel
+    subscription_plan = user_info.get('subscription_plan', 'Temel')
     st.sidebar.success(f"Aktif Paketiniz: **{subscription_plan}**")
 
-    # --- VERİ GİRİŞ BÖLÜMÜ ---
     st.sidebar.header("1. Veri Kaynağınızı Seçin")
     data_source_option = st.sidebar.selectbox("Veri Kaynağı", ["Dosya Yükle", "Google Sheets ile Bağlan"])
     
@@ -339,26 +352,25 @@ def show_dashboard(user_info, api_key, db):
         st.info("Lütfen analize başlamak için kenar çubuğundan geçerli bir veri kaynağı sağlayın.")
         return
 
-    # --- ANALİZ VE PANEL ---
     st.title(f"🚀 {subscription_plan} Finansal Analiz Paneli")
     analiz = calistir_analiz(df)
     if "hata" in analiz:
         st.error(f"Analiz hatası: {analiz['hata']}"); return
 
-    # --- PDF Rapor İndirme (Sadece Uzman) ---
     if subscription_plan == 'Uzman':
         st.sidebar.header("2. Raporlama")
-        with st.spinner("Rapor oluşturuluyor..."):
-             # PDF oluşturmak için gerekli tüm verileri topla
-            model, tahmin = prophet_tahmini_yap(analiz['aylik_veri'])
-            forecast_fig = None
-            stratejik_yorum = "Tahmin için yeterli veri yok."
-            if model and tahmin is not None:
-                forecast_fig = plot_plotly(model, tahmin, xlabel="Tarih", ylabel="Gelir")
-                if api_key:
-                    stratejik_yorum = tahmin_yorumu_uret(api_key, tahmin)
+        
+        # PDF oluşturmak için gerekli tüm verileri topla
+        model, tahmin = prophet_tahmini_yap(analiz['aylik_veri'])
+        forecast_fig = None
+        stratejik_yorum = "Tahmin için yeterli veri yok."
+        if model and tahmin is not None:
+            forecast_fig = plot_plotly(model, tahmin, xlabel="Tarih", ylabel="Gelir")
+            if api_key:
+                stratejik_yorum = tahmin_yorumu_uret(api_key, tahmin)
 
-            pdf_bytes = generate_pdf_report(analiz, stratejik_yorum, forecast_fig)
+        pdf_bytes = generate_pdf_report(analiz, stratejik_yorum, forecast_fig)
+        if pdf_bytes: # Sadece PDF başarıyla oluşturulduysa butonu göster
             st.sidebar.download_button(
                 label="PDF Raporu İndir",
                 data=pdf_bytes,
@@ -366,11 +378,9 @@ def show_dashboard(user_info, api_key, db):
                 mime="application/pdf"
             )
 
-    # --- KRİTİK EŞİK UYARILARI ---
     if analiz['kar_marji'] < 15:
         st.warning(f"⚠️ Kritik Eşik Uyarısı: Kar marjınız (%{analiz['kar_marji']:.2f}) %15'in altında. Maliyetleri gözden geçirin.", icon="🚨")
 
-    # --- SEKMELİ YAPI (Aboneliğe Göre) ---
     tabs = ["Genel Bakış"]
     if subscription_plan in ['Pro', 'Uzman']:
         tabs.extend(["Gelir Analizi", "Gider Analizi"])
@@ -379,7 +389,7 @@ def show_dashboard(user_info, api_key, db):
 
     tab_objects = st.tabs(tabs)
 
-    with tab_objects[0]: # Genel Bakış (Tüm Planlar)
+    with tab_objects[0]:
         st.header("Genel Finansal Durum")
         skor = max(0, min(100, analiz['kar_marji'] * 2.5))
         st.plotly_chart(create_gauge_chart(skor, "Finansal Sağlık Skoru"), use_container_width=True)
@@ -431,7 +441,6 @@ def show_dashboard(user_info, api_key, db):
                              st.session_state.stratejik_yorum = tahmin_yorumu_uret(api_key, tahmin)
                         st.markdown(st.session_state.stratejik_yorum)
 
-                        # YENİ: Geri Bildirim Mekanizması
                         st.write("---")
                         st.write("**Bu yorum faydalı oldu mu?**")
                         fb_col1, fb_col2, fb_col3 = st.columns([1,1,5])
@@ -488,9 +497,8 @@ def main():
         if st.session_state.get('user_info'):
             st.write(f"Hoş Geldin, {st.session_state['user_info']['email']}")
             if st.button("Çıkış Yap"):
-                # Geri bildirim gibi session state'leri temizle
                 for key in list(st.session_state.keys()):
-                    if key != 'user_info': # user_info'yu temizlemeyelim ki tekrar login olmasın
+                    if key != 'user_info':
                         del st.session_state[key]
                 st.session_state.clear(); st.rerun()
         else:
@@ -502,19 +510,17 @@ def main():
         
         if user_doc.exists:
              user_info['subscription_plan'] = user_doc.to_dict().get('subscription_plan', 'Temel')
-        else: # Yeni kullanıcı için temel plan oluştur
+        else:
             db.collection('users').document(user_info['uid']).set({'subscription_plan': 'Temel', 'email': user_info['email']})
             user_info['subscription_plan'] = 'Temel'
         
-        # Abonelik durumuna göre yönlendirme
         if user_info['subscription_plan'] in ['Temel', 'Pro', 'Uzman']:
             api_key = get_gemini_api_key() if user_info['subscription_plan'] in ['Pro', 'Uzman'] else None
             show_dashboard(user_info, api_key, db)
-        else: # Geçiş dönemi veya tanımsız planlar için abonelik sayfası
+        else:
             show_subscription_page(db, user_info)
 
     else:
-        # Basitleştirilmiş giriş/kayıt
         choice = st.selectbox("Giriş Yap / Kayıt Ol", ["Giriş Yap", "Kayıt Ol"])
         st.title("Finansal Analiz Paneline Hoş Geldiniz")
         email = st.text_input("E-posta")
@@ -523,8 +529,6 @@ def main():
         if choice == "Giriş Yap":
             if st.button("Giriş Yap", type="primary"):
                 try:
-                    # Streamlit'in kendi login mekanizması olmadığı için Firebase ile login simüle ediyoruz
-                    # Gerçek bir uygulamada bu işlem sunucu tarafında doğrulanmalıdır.
                     user = auth.get_user_by_email(email)
                     st.session_state['user_info'] = {'uid': user.uid, 'email': user.email}; st.rerun()
                 except Exception as e: 
