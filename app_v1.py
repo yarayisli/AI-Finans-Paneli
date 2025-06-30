@@ -1,4 +1,4 @@
-# KazKaz AI Finansal Danışman - Gelişmiş Analiz Paneli
+# KazKaz AI Finansal Danışman - Gelişmiş ve Tam Donanımlı Panel
 import streamlit as st
 import pandas as pd
 import firebase_admin
@@ -25,8 +25,10 @@ st.markdown("""
 # --- GÜVENLİ BAĞLANTI VE ANAHTAR YÖNETİMİ ---
 @st.cache_resource
 def init_firebase():
+    """Firebase bağlantısını güvenli bir şekilde başlatır."""
     try:
-        cred = credentials.Certificate(st.secrets["firebase"])
+        cred_dict = st.secrets["firebase"]
+        cred = credentials.Certificate(cred_dict)
     except (KeyError, FileNotFoundError):
         try:
             cred = credentials.Certificate("firebase-key.json")
@@ -37,6 +39,7 @@ def init_firebase():
     return True
 
 def get_gemini_api_key():
+    """Gemini API anahtarını güvenli bir şekilde alır."""
     try:
         return st.secrets["GEMINI_API_KEY"]
     except (KeyError, FileNotFoundError):
@@ -46,19 +49,23 @@ def get_gemini_api_key():
 # --- TÜM ANALİZ VE GRAFİK FONKSİYONLARI ---
 
 def calistir_analiz(df):
-    """Tüm finansal metrikleri hesaplar."""
+    """Tüm finansal metrikleri ve analiz verilerini tek seferde hesaplar."""
     if df.empty: return {"hata": "Veri bulunamadı."}
     try:
         analiz = {}
         analiz['toplam_gelir'] = df['Gelir'].sum()
         analiz['toplam_gider'] = df['Gider'].sum()
         analiz['net_kar'] = analiz['toplam_gelir'] - analiz['toplam_gider']
+        
         gider_kategorileri = df[df['Gider'] > 0].groupby('Kategori')['Gider'].sum()
         analiz['en_yuksek_gider_kategorisi'] = gider_kategorileri.idxmax() if not gider_kategorileri.empty else "N/A"
         analiz['kar_marji'] = (analiz['net_kar'] / analiz['toplam_gelir'] * 100) if analiz['toplam_gelir'] > 0 else 0
+        
+        # Grafik verilerini önceden hesapla
         analiz['aylik_veri'] = df.set_index('Tarih').resample('M').agg({'Gelir': 'sum', 'Gider': 'sum'})
         analiz['aylik_veri']['Net Kar'] = analiz['aylik_veri']['Gelir'] - analiz['aylik_veri']['Gider']
         analiz['aylik_veri']['Kar Marjı'] = (analiz['aylik_veri']['Net Kar'] / analiz['aylik_veri']['Gelir'] * 100).fillna(0)
+        
         analiz['top_urunler'] = df[df['Gelir'] > 0].groupby('Satilan_Urun_Adi')['Gelir'].sum().nlargest(5)
         analiz['gider_dagilimi'] = gider_kategorileri
         return analiz
@@ -67,54 +74,40 @@ def calistir_analiz(df):
 def create_gauge_chart(score, title):
     """Finansal Sağlık Skoru için gauge chart oluşturur."""
     fig = go.Figure(go.Indicator(
-        mode = "gauge+number",
-        value = score,
+        mode = "gauge+number", value = score,
         title = {'text': title, 'font': {'size': 20}},
-        gauge = {
-            'axis': {'range': [0, 100], 'tickwidth': 1, 'tickcolor': "white"},
-            'bar': {'color': "#10b981"},
-            'bgcolor': "#1e293b",
-            'borderwidth': 2,
-            'bordercolor': "#334155",
-            'steps' : [
-                {'range': [0, 40], 'color': '#ef4444'},
-                {'range': [40, 70], 'color': '#f59e0b'}],
-            'threshold' : {'line': {'color': "white", 'width': 4}, 'thickness': 0.75, 'value': 70}}))
-    fig.update_layout(paper_bgcolor = "#0f172a", font = {'color': "white", 'family': "Segoe UI"})
+        gauge = {'axis': {'range': [0, 100]}, 'bar': {'color': "#10b981"},
+                 'steps' : [{'range': [0, 40], 'color': '#ef4444'}, {'range': [40, 70], 'color': '#f59e0b'}]}))
+    fig.update_layout(paper_bgcolor = "#0f172a", font = {'color': "white"})
     return fig
 
-def create_bar_chart(df, x, y_list, title):
-    """Gelir & Gider gibi karşılaştırmalı çubuk grafik oluşturur."""
-    fig = px.bar(df, x=x, y=y_list, title=title, barmode='group')
-    fig.update_layout(paper_bgcolor="#0f172a", plot_bgcolor="#1e293b", font_color="white", legend_title_text='')
-    return fig
-
-def create_line_chart(df, x, y, title):
-    """Net Kar gibi trend çizgisi grafiği oluşturur."""
-    fig = px.line(df, x=x, y=y, title=title, markers=True)
-    fig.update_layout(paper_bgcolor="#0f172a", plot_bgcolor="#1e293b", font_color="white")
-    return fig
-    
-def create_pie_chart(df, names, values, title):
-    """Gider dağılımı gibi pasta grafik oluşturur."""
-    fig = px.pie(df, names=names, values=values, title=title, hole=.4)
-    fig.update_layout(paper_bgcolor="#0f172a", plot_bgcolor="#1e293b", font_color="white")
-    return fig
+def prophet_tahmini_yap(aylik_gelir):
+    """Prophet modeli ile tahmin yapar."""
+    if len(aylik_gelir) < 2: return None, None
+    prophet_df = aylik_gelir.reset_index().rename(columns={'Tarih': 'ds', 'Gelir': 'y'})
+    model = Prophet(yearly_seasonality=True, weekly_seasonality=False, daily_seasonality=False)
+    model.fit(prophet_df)
+    future = model.make_future_dataframe(periods=3, freq='M')
+    forecast = model.predict(future)
+    return model, forecast
 
 def yorum_uret(api_key, prompt_data):
     """AI Danışman yorumu üretir."""
     try:
-        genai.configure(api_key=api_key); model = genai.GenerativeModel('gemini-1.5-flash')
+        genai.configure(api_key=api_key)
+        model = genai.GenerativeModel('gemini-1.5-flash')
         prompt = f"Sen deneyimli bir finansal danışmansın. Şu verilere dayanarak, 1-2 cümlelik kısa ve öz bir yorum yap: {prompt_data}"
-        response = model.generate_content(prompt); return response.text
+        response = model.generate_content(prompt)
+        return response.text
     except Exception: return "AI yorumu şu anda kullanılamıyor."
 
 
 # --- ARAYÜZ GÖSTERİM FONKSİYONLARI ---
 
 def show_dashboard(user_info, api_key):
-    st.title(f"🚀 Finansal Analiz Paneli")
-    st.sidebar.info(f"Aktif Paketiniz: **{user_info['subscription_plan']}**")
+    subscription_plan = user_info.get('subscription_plan', 'None')
+    st.title("🚀 Finansal Analiz Paneli")
+    st.sidebar.info(f"Aktif Paketiniz: **{subscription_plan}**")
     
     uploaded_file = st.sidebar.file_uploader("CSV dosyanızı yükleyin", type="csv")
     if not uploaded_file:
@@ -133,49 +126,50 @@ def show_dashboard(user_info, api_key):
     # --- SEKMELİ YAPI ---
     tab1, tab2, tab3, tab4 = st.tabs(["Genel Bakış", "Gelir Analizi", "Gider Analizi", "Gelecek Tahmini"])
 
-    with tab1: # GENEL BAKIŞ
+    with tab1:
         st.header("Genel Finansal Durum")
-        # 1. Finansal Sağlık Skoru
-        skor = max(0, min(100, analiz['kar_marji'] * 2.5)) # Basit bir skor hesaplama
+        # Finansal Sağlık Skoru
+        skor = max(0, min(100, analiz['kar_marji'] * 2.5))
         st.plotly_chart(create_gauge_chart(skor, "Finansal Sağlık Skoru"), use_container_width=True)
         
-        # 2. Gelir & Gider ve Net Kar Trendleri
         col1, col2 = st.columns(2)
         with col1:
-            fig_gelir_gider = create_bar_chart(analiz['aylik_veri'], analiz['aylik_veri'].index, ['Gelir', 'Gider'], "Aylık Gelir & Gider Karşılaştırması")
-            st.plotly_chart(fig_gelir_gider, use_container_width=True)
+            # Gelir & Gider Karşılaştırma
+            fig_bar = px.bar(analiz['aylik_veri'], x=analiz['aylik_veri'].index, y=['Gelir', 'Gider'], title="Aylık Gelir & Gider Karşılaştırması", barmode='group')
+            st.plotly_chart(fig_bar, use_container_width=True)
         with col2:
-            fig_net_kar = create_line_chart(analiz['aylik_veri'], analiz['aylik_veri'].index, 'Net Kar', "Aylık Net Kâr Trendi")
-            st.plotly_chart(fig_net_kar, use_container_width=True)
+            # Net Kar Trendi
+            fig_line = px.line(analiz['aylik_veri'], x=analiz['aylik_veri'].index, y='Net Kar', title="Aylık Net Kâr Trendi", markers=True)
+            st.plotly_chart(fig_line, use_container_width=True)
 
-    with tab2: # GELİR ANALİZİ
+    with tab2:
         st.header("Detaylı Gelir Analizi")
-        # 3. Ürün/Müşteri Bazlı Gelir Grafiği
-        fig_top_urunler = px.bar(analiz['top_urunler'], x='Gelir', y=analiz['top_urunler'].index, orientation='h', title="En Çok Gelir Getiren 5 Ürün/Hizmet")
-        fig_top_urunler.update_layout(paper_bgcolor="#0f172a", plot_bgcolor="#1e293b", font_color="white", yaxis_title='')
-        st.plotly_chart(fig_top_urunler, use_container_width=True)
-        
-        # BONUS: AI Yorumu
-        if api_key and not analiz['top_urunler'].empty:
-            prompt_data = f"En çok gelir getiren ürün '{analiz['top_urunler'].index[0]}' ve geliri {int(analiz['top_urunler'].iloc[0])} TL."
-            yorum = yorum_uret(api_key, prompt_data)
-            st.info(f"**AI Yorumu:** {yorum}")
-
-    with tab3: # GİDER ANALİZİ
-        st.header("Detaylı Gider Analizi")
         col1, col2 = st.columns(2)
         with col1:
-            # 4. Gider Dağılımı Pastası
-            fig_gider_pie = create_pie_chart(analiz['gider_dagilimi'], analiz['gider_dagilimi'].index, analiz['gider_dagilimi'].values, "Kategoriye Göre Gider Dağılımı")
-            st.plotly_chart(fig_gider_pie, use_container_width=True)
+            # Ürün Bazlı Gelir Grafiği
+            fig_urun = px.bar(analiz['top_urunler'], x='Gelir', y=analiz['top_urunler'].index, orientation='h', title="En Çok Gelir Getiren 5 Ürün/Hizmet")
+            st.plotly_chart(fig_urun, use_container_width=True)
         with col2:
-            # 5. Kar Marjı Zaman Serisi
-            fig_kar_marji = create_line_chart(analiz['aylik_veri'], analiz['aylik_veri'].index, 'Kar Marjı', "Aylık Kar Marjı (%) Trendi")
-            st.plotly_chart(fig_kar_marji, use_container_width=True)
+            # Kar Marjı Zaman Serisi
+            fig_marj = px.area(analiz['aylik_veri'], x=analiz['aylik_veri'].index, y='Kar Marjı', title="Aylık Kar Marjı (%) Trendi", markers=True)
+            st.plotly_chart(fig_marj, use_container_width=True)
+        # Bonus: AI Yorumu
+        if api_key and not analiz['top_urunler'].empty:
+            prompt_data = f"En karlı ürün '{analiz['top_urunler'].index[0]}' ve kar marjı trendi."
+            st.info(f"**AI Yorumu:** {yorum_uret(api_key, prompt_data)}")
 
-    with tab4: # GELECEK TAHMİNİ
+    with tab3:
+        st.header("Detaylı Gider Analizi")
+        # Gider Dağılımı Pastası
+        fig_pie = px.pie(analiz['gider_dagilimi'], names=analiz['gider_dagilimi'].index, values=analiz['gider_dagilimi'].values, title="Kategoriye Göre Gider Dağılımı", hole=.4)
+        st.plotly_chart(fig_pie, use_container_width=True)
+        if api_key and not analiz['gider_dagilimi'].empty:
+            prompt_data = f"En büyük gider kalemi '{analiz['en_yuksek_gider_kategorisi']}'. Bu giderin toplamdaki payı."
+            st.info(f"**AI Yorumu:** {yorum_uret(api_key, prompt_data)}")
+
+    with tab4:
         st.header("AI Destekli Gelecek Tahmini")
-        # 6. Prophet Tahmini
+        # Prophet Tahmini
         aylik_gelir = df.set_index('Tarih')[['Gelir']].resample('M').sum()
         model, tahmin = prophet_tahmini_yap(aylik_gelir)
         if model and tahmin is not None:
@@ -184,44 +178,48 @@ def show_dashboard(user_info, api_key):
         else:
             st.warning("Tahmin oluşturmak için yeterli veri yok.")
 
-# --- ANA UYGULAMA AKIŞI ---
-def main():
-    if not init_firebase(): st.stop()
-    if 'user_info' not in st.session_state: st.session_state['user_info'] = None
-    if 'page' not in st.session_state: st.session_state['page'] = 'landing'
-    # ... (Geri kalan tüm giriş/kayıt ve sayfa yönlendirme mantığı aynı)
 
-if __name__ == '__main__':
-    # Bu kısmı basitleştirilmiş bir akışla yeniden yazıyoruz
+def main():
     if 'user_info' not in st.session_state: st.session_state['user_info'] = None
-    if not init_firebase(): 
-        st.error("Uygulama başlatılamıyor. Firebase yapılandırması eksik.")
+    
+    firebase_ok = init_firebase()
+    if not firebase_ok:
+        st.warning("Firebase bağlantısı kurulamadı.")
         st.stop()
         
     db = firestore.client()
-    
+
     with st.sidebar:
         st.header("KazKaz AI")
         if st.session_state.get('user_info'):
             st.write(f"Hoş Geldin, {st.session_state['user_info']['email']}")
             if st.button("Çıkış Yap"):
-                st.session_state.clear()
-                st.rerun()
+                st.session_state.clear(); st.rerun()
         else:
             st.write("Finansal geleceğinize hoş geldiniz.")
 
     if st.session_state.get('user_info'):
-        api_key = get_gemini_api_key()
-        show_dashboard(st.session_state['user_info'], api_key)
+        user_info = st.session_state['user_info']
+        user_doc = db.collection('users').document(user_info['uid']).get()
+        user_info['subscription_plan'] = user_doc.to_dict().get('subscription_plan', 'None') if user_doc.exists else 'None'
+        
+        if user_info['subscription_plan'] == 'None':
+            st.title("Abonelik Paketleri")
+            if st.button("Pro Paket Seç (₺750/ay)", type="primary"):
+                db.collection('users').document(user_info['uid']).set({'subscription_plan': 'Pro'}, merge=True); st.rerun()
+        else:
+            api_key = get_gemini_api_key()
+            show_dashboard(user_info, api_key)
     else:
-        # Basitleştirilmiş giriş ekranı
         st.title("Finansal Analiz Paneline Hoş Geldiniz")
         email = st.text_input("E-posta")
         password = st.text_input("Şifre", type="password")
         if st.button("Giriş Yap", type="primary"):
             try:
                 user = auth.get_user_by_email(email)
-                st.session_state['user_info'] = {'uid': user.uid, 'email': user.email}
-                st.rerun()
-            except:
-                st.error("E-posta veya şifre hatalı.")
+                st.session_state['user_info'] = {'uid': user.uid, 'email': user.email}; st.rerun()
+            except: st.error("E-posta veya şifre hatalı.")
+
+if __name__ == '__main__':
+    main()
+
