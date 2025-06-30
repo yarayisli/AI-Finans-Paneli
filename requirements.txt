@@ -9,3 +9,8 @@ google-generativeai
 firebase-admin
 streamlit-authenticator
 PyYAML
+openpyxl
+gspread
+oauth2client
+fpdf2
+kaleido
