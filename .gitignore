@@ -1,0 +1,23 @@
+# Sanal Ortam Klasörü
+venv/
+.venv/
+
+# Python Cache
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+
+# Hassas Bilgiler
+firebase-key.json
+.streamlit/secrets.toml
+*.log
+app.log
+
+# Yedek Dosyaları
+*yedek.py
+*eski.py
+
+# İşletim Sistemi Dosyaları
+.DS_Store
+Thumbs.db
