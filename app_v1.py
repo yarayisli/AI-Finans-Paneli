@@ -307,7 +307,7 @@ def generate_pdf_report(analiz, stratejik_yorum=None, forecast_fig=None):
     
     # GÜNCELLENDİ: PDF çıktısını hatasız almak için 'latin-1' yerine 'utf-8' denenebilir
     # Ancak FPDF'in standart çıktısı genellikle 'latin-1' ile uyumludur.
-    return pdf.output(dest='S').encode('latin-1')
+    return bytes(pdf.output(dest='S'))
 
 
 # --- Geri kalan kodda değişiklik yok ---
